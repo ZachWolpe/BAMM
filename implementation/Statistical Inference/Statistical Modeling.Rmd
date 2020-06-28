@@ -1,0 +1,828 @@
+---
+title: "Statistical Inference"
+output: html_document
+---
+
+# Statistical Inference 
+
+
+# This Notebook contains rough calculations only. Nothing is finalized or clean. It was a scratchpad.
+
+To better inform our mathematical models, statistical techniques can be deployed for parameter estimation.
+
+A collection of varied datasets were collected from WHO to give a good indication of the state of Malaria in the $3$ target countries:
+  - Nigeria
+  - DRC
+  - Uganda
+  
+We wish to look at the relationship in incidence growth as a function of social-economic factors. The analysis can easily be extended to include other countries.
+
+
+## Clean dataset
+
+The various datasets need to be collected & aggregated into one dataframe. Most of the variables have a time component & as such we need to store the data in a _panel data_ fashion.
+
+```{r, setup, include=FALSE}
+
+setwd("~/Desktop/MSc Advanced Analytics/MMID/Assignment")
+
+# All available datasets
+dirs <- list.dirs('~/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets', full.names=T)
+
+
+
+
+# ________________________________________ Social Economic Datasets ________________________________________ x
+
+
+# -----  Malaria (directly related) -----x
+
+percent_children_u5_w_fever_recieving_antimalarial_drugs <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/%children under 5 with fever receiving antimalarial drugs/data.csv", header = T, sep=';')
+
+use_of_insecticide_treated_bednets_percentage_of_pop_under_5 <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/use of insecticide-treated bed nets (% of under 5 population)/API_SH.MLR.NETS.ZS_DS2_en_csv_v2_1139380.csv", skip=3)
+
+incidence_of_malaria_per_1000_pop_at_risk <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/incidence of malaria per 1000 population at risk/API_SH.MLR.INCD.P3_DS2_en_csv_v2_1124271.csv", skip = 3)
+
+
+
+# ----- Education -----x
+
+literacy_rate_adults_above_15 <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/literacy rate adults 15 & above/API_SE.ADT.LITR.ZS_DS2_en_csv_v2_1120965.csv", skip = 3)
+
+net_secondary_school_enrollment <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/net secondary school enrollment/API_SE.SEC.NENR_DS2_en_csv_v2_1131166.csv", skip=3)
+
+researchers_in_RD_per_million_people <- read.csv( "/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/researchers in R&D (per million people)/API_SP.POP.SCIE.RD.P6_DS2_en_csv_v2_1132073.csv", skip = 3)
+
+no_scientific_techinical_journal_articles <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/scientific & technical journal articles/API_IP.JRN.ARTC.SC_DS2_en_csv_v2_1124961.csv", skip=3)
+
+
+
+
+# ----- Economic Growth & Dev -----x
+
+electric_power_consumption_kwh_per_capital <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/electric power consumption (kwh per capita)/data.csv", sep=';')
+
+GPD <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/GDP data/data.csv", sep=';')
+
+GPD_per_capita <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/GDP per capita/data.csv", sep=';')
+
+
+
+
+# ----- Inequality -----x
+
+gini_coeff <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/Gini coeff/API_SI.POV.GINI_DS2_en_csv_v2_1120931.csv", sep=',', header = T, skip = 3)
+
+income_share_held_by_lowest_10_percent <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/income share held by lowest 10%/API_SI.DST.FRST.10_DS2_en_csv_v2_1122524.csv", skip = 3)
+
+
+
+
+# ----- Population -----x
+
+net_migration <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/net_migration/API_SM.POP.NETM_DS2_en_csv_v2_1120954.csv", skip=3)
+
+total_population <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/population total/API_SP.POP.TOTL_DS2_en_csv_v2_1120881.csv", skip = 3)
+
+population_growth <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/population_growth/API_SP.POP.GROW_DS2_en_csv_v2_1122793.csv", skip = 3)
+
+rural_population_percentage <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/rural_population_percentage/API_SP.RUR.TOTL.ZS_DS2_en_csv_v2_1126704.csv", skip=3)
+
+
+
+# new - climate
+
+CO2_emissions <- read.csv("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/climate change CO2 emissions (kt)/API_19_DS2_en_csv_v2_1125137.csv", skip=3)
+
+
+
+```
+
+We wish to visualize the trends in the social economic data, the function below allows one to to specify a dataset & a range of countries & a visualization is produced.
+
+
+```{r}
+library(tidyverse)
+
+vis <- function(countries, dataset, title, ylab, standardize_as_percentage=F) {
+  cols <- paste('X', '1960':'2019', sep = '')
+  names(dataset)[names(dataset) %in% cols] <- '1960':'2019'
+  dataset_long <- gather(dataset, year, count, `1960`:`2019`)[,c('Country.Name', 'year', 'count')]
+  dataset_long$year <- as.Date(dataset_long$year, '%Y')
+  
+  if (standardize_as_percentage) {
+    dataset_long <- dataset_long %>% group_by(Country.Name) %>% 
+      mutate(count = (count-min(count, na.rm=T))/max(count, na.rm=T))
+  }
+  
+  remove_missing(dataset_long[dataset_long$Country.Name %in% countries, ]) %>%
+  ggplot(aes(x=year, y=count, col=Country.Name, na.rm=T)) + geom_line() + theme_minimal() + ylab(ylab) + 
+  theme(plot.title = element_text(hjust = .5)) + ggtitle(title)
+}
+
+
+# hyper parameters
+countries <- c('Nigeria', "Democratic Republic of the Congo", "Uganda", 'Congo, Dem. Rep.')
+
+
+
+# ----- Population -----x
+
+# population
+vis(countries, dataset=total_population, title = 'Total Population', ylab = '', standardize_as_percentage = T)
+
+# population growth
+vis(countries, dataset=population_growth, title = 'Population Growth', ylab = '', standardize_as_percentage = F)
+
+# net migration
+vis(countries, dataset=net_migration, title = 'Net Migration', ylab = '', standardize_as_percentage = F)
+
+# rural population
+vis(countries, dataset=rural_population_percentage, title = '% Rural Population', ylab = '', standardize_as_percentage = F)
+ 
+  
+
+
+# ----- Inequality -----x
+
+# gini coefficient
+vis(countries, dataset=gini_coeff, title = 'Gini Coefficient', ylab = '', standardize_as_percentage = F)
+
+# income inequality
+vis(countries, dataset=income_share_held_by_lowest_10_percent, title = 'Income percentage held by lowest 10%', ylab = '', standardize_as_percentage = F)
+
+
+
+
+
+# -----  Malaria (directly related) -----x
+
+# percentage children u5 with fever receiving antimalarial drugs 
+vis(countries, dataset=percent_children_u5_w_fever_recieving_antimalarial_drugs, title = '% children under 5 with fever receiving antimalarial drugs ', ylab = '', standardize_as_percentage = F)
+
+# use of ITNs
+vis(countries, dataset=use_of_insecticide_treated_bednets_percentage_of_pop_under_5, 
+    title='% children under 5 that use insecticide treated bednets', ylab = '', standardize_as_percentage = F)
+ 
+# incidence of malaria
+vis(countries, dataset=incidence_of_malaria_per_1000_pop_at_risk, 
+    title='Incidence of malaria per 1000 people at risk', ylab = '', standardize_as_percentage = F)
+ 
+
+
+
+# ----- Education -----x
+
+# adult literact 
+vis(countries, dataset=literacy_rate_adults_above_15, 
+    title='Literacy rate (adults above 15)', ylab = '', standardize_as_percentage = F)
+
+# secondary school enrollment
+vis(countries, dataset=net_secondary_school_enrollment, 
+    title='Secondary school enrollment', ylab = '', standardize_as_percentage = F)
+ 
+# no. researchers
+vis(countries, dataset=researchers_in_RD_per_million_people, 
+    title='Researchers in R&D (per million people)', ylab = '', standardize_as_percentage = F)
+
+# scientific output
+vis(countries, dataset=no_scientific_techinical_journal_articles, 
+    title='No. of Scientific or Technical Journals Written', ylab = '', standardize_as_percentage = F)
+
+
+
+
+
+
+# ----- Economic Growth & Dev -----x
+
+# electicity use
+vis(countries, dataset=electric_power_consumption_kwh_per_capital, 
+    title='Electric Power Consumption (kwh/capita)', ylab = '', standardize_as_percentage = F)
+
+
+# GDP
+vis(countries, dataset=GPD, title='GDP', ylab = '', standardize_as_percentage = F)
+vis(countries, dataset=GPD, title='Standardized GDP', ylab = '', standardize_as_percentage = T)
+
+
+# GDP per capita
+vis(countries, dataset=GPD_per_capita, title='GDP per Capita', ylab = '', standardize_as_percentage = F)
+vis(countries, dataset=GPD_per_capita, title='Standardized GDP per Capita', ylab = '', standardize_as_percentage = T)
+
+
+
+
+
+
+
+```
+
+
+## Malaria incidence data
+
+Here we process the cases number statistics.
+
+
+```{r}
+
+# ---- malaria stats ----x
+
+estimated_cases <- read.csv('../../datasets/malaria statistics/Estimated_cases.csv', header = F)
+names(estimated_cases) <- trimws(estimated_cases[2,])
+estimated_cases <- estimated_cases[-c(1,2),]
+
+
+
+estimated_deaths <- read.csv('../../datasets/malaria statistics/Estimated_deaths.csv', header = F)
+names(estimated_deaths) <- trimws(estimated_deaths[2,])
+estimated_deaths <- estimated_deaths[-c(1,2),]
+
+
+prevention <- read.csv('../../datasets/malaria statistics/Prevention_children_under_ITNs.csv', header = F)
+names(prevention) <- trimws(prevention[1,])
+prevention <- prevention[-1,]
+
+```
+
+
+## Estimated Cases
+
+Visualize the case data
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+
+countries <- c('Nigeria', "Democratic Republic of the Congo", "Uganda")
+
+
+numeric_column <- function(col) {
+  col %>% 
+  gsub(pattern = '\\[.*]', replacement = "") %>%
+  gsub(pattern = ' ', replacement = '') %>%
+  as.numeric()
+}
+
+
+# ---- estimated cases ----
+estimated_cases[,-1] <- apply(estimated_cases[,-1], 2, FUN = numeric_column)
+
+long_case_data <- gather(estimated_cases, year, cases, `2017`:`2010`, factor_key=TRUE)
+long_case_data$year <- as.Date(as.character(long_case_data$year), '%Y')
+
+long_case_data[long_case_data$Country %in% countries, ] %>%
+  ggplot(aes(x=year, y=cases, col=Country)) + geom_line() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = .5)) + ggtitle('Malaria Cases')
+
+
+
+# ---- estimated deaths ----
+estimated_deaths[,-1] <- apply(estimated_deaths[,-1], 2, FUN=numeric_column)
+
+long_death_data <- gather(estimated_deaths, year, deaths, `2017`:`2010`, factor_key=TRUE)
+long_death_data$year <- as.Date(as.character(long_death_data$year), '%Y')
+
+long_death_data[long_death_data$Country %in% countries, ] %>%
+  ggplot(aes(x=year, y=deaths, col=Country)) + geom_line() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = .5)) + ggtitle('Malaria Deaths')
+
+
+
+# ---- Prevention: children under ITNs ----
+prevention[,-c(1,2)] <- apply(matrix(prevention[,-c(1,2)]), 2, FUN=numeric_column)
+
+long_death_data <- gather(estimated_deaths, year, deaths, `2017`:`2010`, factor_key=TRUE)
+long_death_data$year <- as.Date(as.character(long_death_data$year), '%Y')
+
+
+
+
+# clean
+compress_date_range <- function(index) {
+  splt <- strsplit(prevention$Year[index], '-')
+  round(mean(lapply(splt, as.numeric)[[1]]))
+}
+
+# indeces of date ranges 
+ind <- grep('-', prevention$Year)
+prevention$Year[ind] <- unlist(lapply(ind, FUN = compress_date_range))
+prevention$Year <- as.Date(as.character(prevention$Year), '%Y')
+
+prevention$child <- prevention$`Children aged &lt;5 years sleeping under insecticide-treated nets (%)`
+
+prevention[prevention$Country %in% countries, ] %>%
+  ggplot(aes(x=Year, y=child, col=Country)) + geom_line() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = .5)) + ggtitle('Percentage of children under 5 sleeping under ITNs')
+```
+
+
+
+
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+# Model
+
+Clean Matrices
+
+```{r}
+
+
+
+
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+
+
+# ---------- Clean Data ----------x
+clean_data <- function(dataset, standardize_as_percentage=F) {
+  cols <- paste('X', '1960':'2019', sep = '')
+  names(dataset)[names(dataset) %in% cols] <- '1960':'2019'
+  dataset_long <- gather(dataset, year, count, `1960`:`2019`)[,c('Country.Name', 'year', 'count')]
+  
+  if (standardize_as_percentage) {
+    dataset_long <- dataset_long %>% group_by(Country.Name) %>% 
+      mutate(count = (count-min(count, na.rm=T))/max(count, na.rm=T))
+  }
+  
+  dataset_long
+}
+
+
+# ---------- Create Response Variable ----------x
+
+Y <- clean_data(incidence_of_malaria_per_1000_pop_at_risk)
+Y <- Y[!is.na(Y$count),]
+countries_list <- Y$Country.Name
+
+
+
+
+
+
+
+# ---------- Create Independent Variable ----------x
+perc_ITNs_pop_under_5 <- clean_data(use_of_insecticide_treated_bednets_percentage_of_pop_under_5)
+perc_under_5_rec_antimal_drugs <- clean_data(percent_children_u5_w_fever_recieving_antimalarial_drugs)
+std_gdp <- clean_data(GPD, standardize_as_percentage = T)
+rural_pop_perc <- clean_data(rural_population_percentage)
+lit_rate_adults <- clean_data(literacy_rate_adults_above_15)
+
+
+```
+
+Next the data needs to be cleaned, missing values imputed as averages & all data concatonated into one dataset.
+
+```{r}
+
+
+citation("lme4")
+library(imputeTS)
+
+
+# ---- remove countries without a response ----x
+prune_countries <- function(data, countries=countries_list) {
+  data[data$Country.Name %in% countries,]
+}
+
+perc_ITNs_pop_under_5 <- prune_countries(perc_ITNs_pop_under_5)
+perc_under_5_rec_antimal_drugs <- prune_countries(perc_under_5_rec_antimal_drugs)
+std_gdp <- prune_countries(std_gdp)
+rural_pop_perc <- prune_countries(rural_pop_perc)
+lit_rate_adults <- prune_countries(lit_rate_adults)
+
+
+
+# ----- impute NA's as moving average -----x
+lit_rate_adults <- imputeTS::na_ma(lit_rate_adults)
+perc_ITNs_pop_under_5 <- na_ma(perc_ITNs_pop_under_5)
+perc_under_5_rec_antimal_drugs <- na_ma(perc_under_5_rec_antimal_drugs)
+std_gdp <- na_ma(std_gdp)
+rural_pop_perc <- na_ma(rural_pop_perc)
+
+
+
+
+# ----- compute GDP growth rate -----x
+std_gdp <- std_gdp %>% group_by(Country.Name) %>% mutate(grw_rate = (count-lag(count))/lag(count))
+std_gdp$grw_rate[std_gdp$grw_rate==Inf] <- 0
+std_gdp <- na_ma(std_gdp)
+
+
+
+# ---------- X: Design Matrix ----------x
+
+
+# --- fix col names ---x
+names(lit_rate_adults) <- c("Country.Name", "year", "lit_rate_adults")
+names(perc_ITNs_pop_under_5) <- c("Country.Name", "year", "perc_ITNs_pop_under_5")
+names(perc_under_5_rec_antimal_drugs) <- c("Country.Name", "year", "perc_under_5_rec_antimal_drugs")
+names(std_gdp) <- c("Country.Name", "year", "std_gdp", 'std_gdp_growth_rate')
+names(rural_pop_perc) <- c("Country.Name", "year", "rural_pop_perc")
+
+
+X <- Reduce(function(x, y) merge(x, y, by=c('Country.Name', 'year')), list(lit_rate_adults, perc_ITNs_pop_under_5, perc_under_5_rec_antimal_drugs, std_gdp, rural_pop_perc))
+y <- Y 
+
+dim(y)  
+dim(X)
+
+unique(y$year)
+unique(X$year)
+
+# only use data over Y's range (years)
+X <- X[X$year %in% y$year,]
+
+dim(y)  
+dim(X)
+
+
+# ---- convert to date type ----x 
+y$year <- as.Date(y$year, '%Y')
+X$year <- as.Date(X$year, '%Y')
+
+# ----- concate data ------x
+names(y) <- c('Country.Name', 'year', 'mal_inc_per_1000_at_risk')
+
+data <- merge(X, y, by=c('Country.Name', 'year'))
+
+
+# ---- save dataframe! ----x
+save(data, file="/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/clean_model_data.Rda")
+save(countries_list, file="/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/countries_list.Rda")
+
+
+load("/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/clean_model_data.Rda")
+
+countries_list
+
+```
+
+
+# Model: Heirarchical GLM via REML
+
+Now that the data is clean we need to formulate a model. There is a nature temperal structure in the data, fitting a standard GLM is thus inappropriate as it does not dependent covariate structure.
+
+To capture the heirarchical GLM in an unbiased way, where the temporal element is considered by considering an individual a heirarchy (group) by which elements are
+
+
+```{r}
+
+# ---------- Fit Mixed Effect Model: Hierarchy==Time ----------x
+
+library(lme4)
+
+
+
+GLMM <- lmer(mal_inc_per_1000_at_risk ~ lit_rate_adults + perc_ITNs_pop_under_5 + perc_under_5_rec_antimal_drugs  + 
+               std_gdp_growth_rate + rural_pop_perc + (year|Country.Name), data = data)
+
+
+
+
+summary(GLMM)
+
+yhat <- predict(GLMM)
+arg_data <- cbind(data, yhat)
+countries_list <- unique(data$Country.Name)
+
+
+plot_for_countries <- function() {
+    cc <- sample(countries_list, 1)
+    arg_data[arg_data$Country.Name==cc,] %>% 
+    ggplot(aes(x=year, y=mal_inc_per_1000_at_risk)) + geom_point(col='darkred') + geom_line(col='darkred') +
+    geom_point(aes(x=year, y=yhat), col='steelblue') + geom_line(aes(x=year, y=yhat), col='steelblue') + ggtitle(cc) +
+      ylab('Malaria Incidence (per 1000 people at Risk)') + xlab('Year') +  theme_minimal() + 
+      theme(plot.title =element_text(hjust = 0.5))
+    
+
+}
+
+plot_for_countries()
+  
+
+```
+
+
+# Sigmoid Mapping 
+
+Fit the Sigmoid for a particular country & timeframe
+
+Year Range: 2000-2018
+
+Given model inputs! predict !  
+
+```{r}
+
+n_years <- 10
+country <- 'World'
+
+
+
+
+
+
+
+compute_new_prediction <- function(country) {
+  
+  
+  
+  # --- compute growth in each variable ---x
+  sub <- arg_data[arg_data$Country.Name == country,]
+  sub[sub==0] <- NA
+  sub <- na_ma(sub)
+  
+  
+  
+  # ---- comptute growth rates ---- x
+  sub <- sub %>% mutate(lit_rate_adults_gr = 
+                          ifelse(is.na((lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults), 1,
+                                 (lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults),
+                        
+                        perc_ITNs_pop_under_5_gr =
+                          ifelse(is.na((perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)), 1,
+                                 (perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)),
+                        
+                        perc_under_5_rec_antimal_drugs_gr = 
+                          ifelse(is.na((perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/lag(perc_under_5_rec_antimal_drugs)), 1,
+                                 (perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/lag(perc_under_5_rec_antimal_drugs)),
+                        
+                        std_gdp_gr = 
+                          ifelse(is.na((std_gdp-lag(std_gdp))/lag(std_gdp)), 1,
+                                 (std_gdp-lag(std_gdp))/lag(std_gdp)),
+  
+                        std_gdp_growth_rate_gr = 
+                          ifelse(is.na((std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)), 1,
+                                 (std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)),
+  
+                        rural_pop_perc_gr = 
+                          ifelse(is.na((rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)), 1,
+                                 (rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)))
+  
+  
+  
+  
+  # ---- inititional variables ----x
+  lit_rate_adults_2                 <- c(sub$lit_rate_adults[1] * 1)
+  perc_ITNs_pop_under_5_2           <- c(sub$perc_ITNs_pop_under_5[1] * 1)
+  perc_under_5_rec_antimal_drugs_2  <- c(sub$perc_under_5_rec_antimal_drugs[1] * 1)
+  std_gdp_2                         <- c(sub$std_gdp[1] * 1)
+  std_gdp_growth_rate_2             <- c(sub$std_gdp_growth_rate[1] * 1)
+  rural_pop_perc_2                  <- c(sub$rural_pop_perc[1] * 1)
+  
+  
+  # ---- compute new variables ----x
+  for (i in 2:19) {
+    lit_rate_adults_2 <- c(lit_rate_adults_2, lit_rate_adults_2[i-1] + lit_rate_adults_2[i-1]*sub$lit_rate_adults_gr[i])
+    perc_ITNs_pop_under_5_2 <- c(perc_ITNs_pop_under_5_2, perc_ITNs_pop_under_5_2[i-1] + perc_ITNs_pop_under_5_2[i-1]*sub$perc_ITNs_pop_under_5_gr[i])
+    perc_under_5_rec_antimal_drugs_2 <- c(perc_under_5_rec_antimal_drugs_2, perc_under_5_rec_antimal_drugs_2[i-1] +
+                                            perc_under_5_rec_antimal_drugs_2[i-1]*sub$perc_under_5_rec_antimal_drugs_gr[i])
+    std_gdp_2 <- c(std_gdp_2, std_gdp_2[i-1] + std_gdp_2[i-1]*sub$std_gdp_gr[i])
+    std_gdp_growth_rate_2 <- c(std_gdp_growth_rate_2, std_gdp_growth_rate_2[i-1] + std_gdp_growth_rate_2[i-1]*sub$std_gdp_growth_rate_gr[i])
+    rural_pop_perc_2 <- c(rural_pop_perc_2, rural_pop_perc_2[i-1] + rural_pop_perc_2[i-1]*sub$rural_pop_perc_gr[i])
+  }
+  
+  
+  # ---- create new dataset ----x 
+  sub <- data.frame(Country.Name = sub$Country.Name, year = sub$year, lit_rate_adults=lit_rate_adults_2,
+                    perc_ITNs_pop_under_5=perc_ITNs_pop_under_5_2, perc_under_5_rec_antimal_drugs=perc_under_5_rec_antimal_drugs_2,
+                    std_gdp=std_gdp_2, std_gdp_growth_rate=std_gdp_growth_rate_2, rural_pop_perc=rural_pop_perc_2)
+  
+  
+  
+  sub$yhat <- predict(GLMM, sub)
+  sub
+
+}
+
+
+
+
+sub <- compute_new_prediction('Uganda')
+
+arg_data[arg_data$Country.Name=='Uganda',] %>% 
+ggplot(aes(x=year, y=mal_inc_per_1000_at_risk)) + geom_point(col='darkred') + geom_line(col='darkred') +
+geom_point(aes(x=year, y=yhat), col='pink') + 
+  # geom_line(aes(x=year, y=yhat), col='steelblue') + ggtitle(cc) +
+  ylab('Malaria Incidence (per 1000 people at Risk)') + xlab('Year') +  theme_minimal() + 
+  geom_line(aes(x = sub$year, y=sub$yhat), col='lightblue') +
+  theme(plot.title =element_text(hjust = 0.5))
+    
+
+
+
+
+```
+
+
+# Sigmoid Transfermation 
+
+
+```{r}
+
+
+arg_data[arg_data$Country.Name=='Uganda',] %>% 
+ggplot(aes(x=year, y=mal_inc_per_1000_at_risk)) + geom_point(col='darkred') + geom_line(col='darkred') +
+geom_point(aes(x=year, y=yhat), col='pink') + 
+  # geom_line(aes(x=year, y=yhat), col='steelblue') + ggtitle(cc) +
+  ylab('Malaria Incidence (per 1000 people at Risk)') + xlab('Year') +  theme_minimal() + 
+  geom_line(aes(x = sub$year, y=sub$yhat), col='lightblue') +
+  theme(plot.title =element_text(hjust = 0.5))
+    
+
+arg_data[arg_data$Country.Name=='Uganda',][19,]
+
+
+first_inc <- arg_data[arg_data$Country.Name=='Uganda',]$mal_inc_per_1000_at_risk[1]
+last_inc <- arg_data[arg_data$Country.Name=='Uganda',]$mal_inc_per_1000_at_risk[19]
+
+print(paste(round((last_inc-first_inc)/first_inc*100, 4), '% change', sep=''))
+
+
+# given the models predicted change 
+old_ch <- -43
+new_ch <- -47
+
+# the old should map to the prior, the prior is given.
+prior_theta <- 3
+
+# determine the range: theta: 1-4
+
+# center around old == mean == zero
+
+sigmoid <- function(x) 1/(1+exp(-x))
+
+x <- seq(-10, 10, length.out = 100)
+
+plot(x, sigmoid(x), type='l', main='standard sigmoid', frame=F, col='orange')
+
+
+# x range need not be standardized
+
+# given the models predicted change 
+old_ch <- -.43
+new_ch <- -.47
+
+# y range needs to fit the parameter range: 1-4
+plot(x, 1+(4-1)*sigmoid(x), type='l', main='standard sigmoid', frame=F, col='orange')
+abline(v = old_ch-new_ch, h = 1+(4-1)*sigmoid(old_ch-new_ch))
+```
+
+
+# Temerature
+
+```{r}
+t<-seq(0,100,1)
+beta1<-1
+beta0<-1
+
+#https://www.r-bloggers.com/bayesian-models-in-r-2/
+
+
+likelihood <- function(t) {
+  cos(t/2)*3  + cos(t)*3 + 28
+}
+
+plot(t, y, type="l", frame=F, main='Simulated Nigeria Temperature Data', col='steelblue', xlab='', ylab='temperature')
+
+
+y <- likelihood(1:1000)
+
+
+
+dy <- density(y)
+
+
+
+x_range <- seq(15,45,length.out = 512) 
+prior <- dnorm(sample(x_range, size = 512/2), mean=30, 0.2) + dnorm(sample(x_range, size = 512/2), mean=22, 0.2)
+
+
+
+
+
+prior <- c(rnorm(512/2, mean=30, 1), rnorm(512/2, mean=33, 1))
+dp <- density(prior)
+posterior <- dy$y* dp$y
+
+
+# --- likelihood ---x
+plot(density(y), col='darkblue', ylab='density', xlab='Temperature', main='Posterior Distribution of Temperature', frame=F)
+polygon(density(y), col=adjustcolor("darkblue",alpha.f=0.1), border=NA) 
+
+# --- prior ---x
+lines(dp, col='darkgreen', type='l')
+polygon(dp, col=adjustcolor("darkgreen",alpha.f=0.1), border=NA) 
+
+# --- posterior ---x
+lines(x_range, posterior, col='steelblue', type='l')
+abline(v=x_range[which(posterior==max(posterior))], col='black')
+polygon(x_range, posterior, col=adjustcolor("steelblue",alpha.f=0.2), border=NA)
+
+legend('topright', legend=c('density', 'prior', 'posterior'), col=c('darkblue', 'darkgreen', 'steelblue'), lty=1, cex=0.8)
+
+
+```
+
+
+
+# Bayesian Temperature
+
+```{r}
+rangeP <- seq(0, 1, length.out = 100)
+plot(rangeP, dbinom(x = 8, prob = rangeP, size = 10),
+type = "l", xlab = "P(Black)", ylab = "Density")
+
+	
+lines(rangeP, dnorm(x = rangeP, mean = .5, sd = .1) / 15,
+col = "red")
+
+lik <- dbinom(x = 8, prob = rangeP, size = 10)
+prior <- dnorm(x = rangeP, mean = .5, sd = .1)
+lines(rangeP, lik * prior, col = "green")
+
+
+
+
+```
+
+
+
+
+## Parasital Parameters
+
+```{r}
+
+
+
+plot_densities <- function(density, prior, posterior) {
+  plot(dens, col='darkblue', ylab='density', xlab='Temperature', main='Posterior Distribution of phi', frame=F, type='l')
+  polygon(dens, col=adjustcolor("darkblue",alpha.f=0.1), border=NA) 
+  
+  
+  lines(prior, col='darkgreen', type='l')
+  polygon(prior, col=adjustcolor("darkgreen",alpha.f=0.1), border=NA) 
+  
+  lines(posterior, col='darkred', type='l')
+  abline(v=x_r[which(posterior==max(posterior))], col='black')
+  polygon(posterior, col=adjustcolor("darkred",alpha.f=0.4), border=NA)
+  legend('topright', legend=c('density', 'prior', 'posterior'), col=c('darkblue', 'darkgreen', 'darkred'), lty=1, cex=0.8)
+}
+
+
+# range 
+x_r <- seq(20,42,length.out = 100)
+
+# prior 
+prior <- dunif(x_r,min=22, max=40)
+# prior <- dnorm(x_r, mean = 22, sd = 2)
+
+
+# density
+dens <- dnorm(x_r, mean = 30, sd = 2)
+
+# posterior  
+posterior <- prior * dens
+posterior <- posterior/sum(posterior)
+
+
+
+plot_densities(dens, prior, posterior)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

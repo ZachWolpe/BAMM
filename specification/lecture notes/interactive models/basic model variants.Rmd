@@ -1,0 +1,309 @@
+---
+title: "Malaria Modeling"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    runtime: shiny
+---
+
+
+<style>                     
+.navbar {
+  background-color:#c7e0f9;
+  border-color:white;
+  text-color:red;
+}
+.navbar-brand {
+color:#1E8CD0!important;
+}
+</style>                    
+
+
+
+```{r, setup, include=FALSE}
+library(flexdashboard)
+library(deSolve)
+library(shiny)
+library(dplyr)
+library(magick)
+```
+
+
+
+Mathematical Compartmental Models
+=====================================
+
+Inputs {.sidebar}
+-------------------------------------
+
+
+
+```{r}
+
+
+titlePanel('SIR model parameters')
+sliderInput("beta", label = "Beta", min = 0, max = 5, value = 0.8, step = 0.01)
+sliderInput("gamma", label = "Gamma", min = 0, max = 1, value = 0.1, step = 0.01)
+sliderInput("I", label = "Infectious", min = 0, max = 1000, value = 1, step = 1)
+
+#------------- 
+  
+titlePanel('SEIR parameters')
+sliderInput("sig", label = "Sig", min = 0, max = 1, value = 0.1, step = 0.01)
+
+#------------- 
+
+titlePanel('SIR dynamic parameters')
+sliderInput("b", label = "Birth Rate", min = 0, max = 1, value = 1/100, step = 0.01)
+sliderInput("d", label = "Death Rate", min = 0, max = 1, value = 1/100, step = 0.01)
+
+
+titlePanel('SIRS parameters')
+sliderInput("p", label = "Loss of Immunity", min = 0, max = 1, value = 1/100, step = 0.01)
+```
+
+$\beta$: number of contacts per unit time
+$\gamma$: rate of recovery
+$E$: Exposure state consists of people who have 
+$b$: Birth rate
+$d$: Dealth rate
+$p$: probabilty of becoming susectable once again: loss of immunity
+
+
+
+
+
+
+
+Column {data-width=500}
+-----------------------------------------------------------------------
+
+
+
+### SIR Model
+
+```{r}
+
+sir <- function(t, x, parms)  {
+  with(as.list(c(parms, x)), {
+    dS=-beta*I/1000*S
+    dI=beta*I/1000*S-r*I
+    dR=r*I
+    output <- c(dS, dI, dR)
+    list(output)
+  })
+}
+
+
+
+renderPlot({
+  beta <- input$beta
+  gam <- input$gamma
+  I <- input$I
+  S <- 1000-I
+  
+
+  #the Initial values
+  start<-c(S=S, I=I,R=0)
+  
+  ## The parameters 
+  parms <- c(beta=beta, r=gam)
+  
+  ## vector of timesteps
+  times <- seq(0, 100, 1)
+  
+  run_d<-ode(times=times, y=start, func=sir,parms=parms)
+  #summary(run_d)
+  
+  
+  plot(run_d[,2], col="red", ylim=c(0,1000), type="l", main="SIR Model", ylab="Population")
+  lines(run_d[,3], col="blue")
+  lines(run_d[,4], col="green")
+  legend("topright",legend=c("S", "I", "R"), col=c("red", "blue", "green"), lty=c(1,1,1))
+})
+
+
+
+```
+
+
+
+
+
+
+### SEIR Model
+
+```{r}
+
+#SEIR model for measles
+
+seir <- function(t, x, parms)  {
+  with(as.list(c(parms, x)), {
+    dS=-beta*I/1000*S
+    dE=beta*I/1000*S-f*E
+    dI=f*E-r*I
+    dR=r*I
+    output <- c(dS, dE, dI, dR)
+    list(output)
+  })
+}
+
+renderPlot({
+  beta <- input$beta
+  gam <- input$gamma
+  sig <- input$sig
+  I <- input$I
+  S <- 1000-I
+  
+  
+  #the Initial values
+  start<-c(S=S, E=0, I=I, R=0)
+  
+  ## The parameters 
+  parms <- c(beta=beta,f=sig,r=gam)
+
+  ## vector of timesteps
+  times <- seq(0, 100, 1)
+  
+  run_d<-ode(times=times, y=start, func=seir,parms=parms)
+  #plot(run_d, ylim=c(0,1))
+  #summary(run_d)
+  
+  plot(run_d[,2], col="red", ylim=c(0,1000), type="l", main="SEIR")
+  lines(run_d[,3], col="blue")
+  lines(run_d[,4], col="orange")
+  lines(run_d[,5], col="green")
+  legend("topright",legend=c("S","E", "I", "R"), col=c("red", "blue", "orange", "green"), lty=c(1,1,1,1))
+})
+
+
+
+
+
+```
+
+
+Column {data-width=500}
+-----------------------------------------------------------------------
+
+
+
+
+
+### SIR Model with a Dynamic Popular
+
+```{r}
+
+sir_dynamic <- function(t, x, parms)  {
+  with(as.list(c(parms, x)), {
+    dS=b*N -beta*I/N*S - d*S
+    dI=beta*I/N*S -r*I - d*I
+    dR=r*I - d*R
+    output <- c(dS, dI, dR)
+    list(output)
+  })
+}
+
+
+
+renderPlot({
+  N <- 1000
+  beta <- input$beta
+  gam <- input$gamma
+  b <- input$b
+  d <- input$d
+  I <- input$I
+  S <- N-I
+
+  
+
+  #the Initial values
+  start<-c(S=S, I=I, R=0)
+  
+  ## The parameters 
+  parms <- c(beta=beta, r=gam, b=b, d=d, N=N)
+  
+  ## vector of timesteps
+  times <- seq(0, 100, 1)
+  
+  run_d<-ode(times=times, y=start, func=sir_dynamic, parms=parms)
+  #summary(run_d)
+  
+  
+  plot(run_d[,2], col="red", ylim=c(0,1000), type="l", main="Dynamic Population SIR Model", ylab="Population")
+  lines(run_d[,3], col="blue")
+  lines(run_d[,4], col="green")
+  legend("topright",legend=c("S", "I", "R"), col=c("red", "blue", "green"), lty=c(1,1,1))
+  
+})
+
+
+
+```
+
+
+
+
+
+
+### SIRS: Loss of Immunity
+
+```{r}
+
+sirs <- function(t, x, parms)  {
+  with(as.list(c(parms, x)), {
+    dS=b*N -beta*I/N*S - d*S + p*R
+    dI=beta*I/N*S -r*I - d*I
+    dR=r*I - d*R - p*R
+    output <- c(dS, dI, dR)
+    list(output)
+  })
+}
+
+
+
+renderPlot({
+  N <- 1000
+  beta <- input$beta
+  gam <- input$gamma
+  b <- input$b
+  d <- input$d
+  I <- input$I
+  p <- input$p
+  S <- N-I
+
+  
+
+  #the Initial values
+  start<-c(S=S, I=I, R=0)
+  
+  ## The parameters 
+  parms <- c(beta=beta, r=gam, b=b, d=d, N=N, p=p)
+  
+  ## vector of timesteps
+  times <- seq(0, 100, 1)
+  
+  run_d<-ode(times=times, y=start, func=sirs, parms=parms)
+  #summary(run_d)
+  
+  
+  plot(run_d[,2], col="red", ylim=c(0,1000), type="l", main="Dynamic Population SIR Model", ylab="Population")
+  lines(run_d[,3], col="blue")
+  lines(run_d[,4], col="green")
+  legend("topright",legend=c("S", "I", "R"), col=c("red", "blue", "green"), lty=c(1,1,1))
+
+})
+
+
+
+
+```
+
+### SITRSBD: Suseceptible Infectious Treatment Recovered Susceptable Birth Death Model
+
+```{r}
+
+
+```
+

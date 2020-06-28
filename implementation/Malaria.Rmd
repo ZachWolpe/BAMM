@@ -1,0 +1,1470 @@
+---
+title: "BAMM: A Bayesian Adaptive Mathematical framework for Malaria Tranistion Dynamics"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    runtime: shiny
+    rconnect
+---
+
+
+<style>                     
+.navbar {
+  background-color:#c7e0f9;
+  border-color:white;
+  text-color:red;
+}
+.navbar-brand {
+color:#1E8CD0!important;
+}
+</style>                    
+
+
+
+```{r, setup, include=FALSE}
+library(flexdashboard)
+library(deSolve)
+library(shiny)
+library(dplyr)
+library(circlize)
+library(magick)
+library(lme4)
+library(ggplot2)
+library(rsconnect)
+
+load(file="/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/clean_model_data.Rda")
+load(file="/Users/zachwolpe/Desktop/MSc Advanced Analytics/MMID/Assignment/datasets/countries_list.Rda")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+Mathematical Compartmental Models
+=====================================
+
+Inputs {.sidebar}
+-------------------------------------
+
+Parameters are given in the inverse (bar phi, f, h)
+
+```{r}
+
+'Global Parameters' 
+
+# -------------------------------------------------- Core Parameters -------------------------------------------------- x
+
+selectInput('country', 'Country', countries_list, selected = 'World', multiple = FALSE,
+  selectize = TRUE, width = NULL, size = NULL)
+sliderInput('years', label='years', min=1, max=18, value=10, step=1)
+sliderInput('plot_height', label='Plot Height', min=0, max=1, value=0.6, step=0.01)
+
+# ------- Initial Conditions -------- x
+
+sliderInput('host_prop', label='Human (host) initial infectious proportion', min=0, max=1, value=0.9, step=0.01)
+sliderInput('mos_prop', label='Mosquito (vector) initial infectious proportion', min=0, max=1, value=0.5, step=0.01)
+
+
+
+
+'Social-Econ Factors' 
+
+# -------------------------------------------------- Social Economic Variables -------------------------------------------------- x
+
+sliderInput('lit_rate', label='Literacy Rate', min=0.01, max=5, value=1, step=0.01)
+sliderInput('perc_ITNs_pop_under_5', label='% of population under 5 sleeping under ITNs', min=0.01, max=5, value=1, step=0.01)
+sliderInput('perc_under_5_rec_antimal_drugs', label='% of population under 5 rec antimalaria drugs', min=0.01, max=5, value=1, step=0.01)
+sliderInput('std_gdp_growth_rate', label='GDP growth rate', min=0.01, max=5, value=1, step=0.01)
+sliderInput('rural_pop_perc', label='Rural population %', min=0.01, max=5, value=1, step=0.01)
+
+
+'Priors' 
+
+# -------------------------------------------------- Priors -------------------------------------------------- x
+
+sliderInput("theta", label = "Prior Theta: θ", min = 01, max = 4, value = 2.5, step = 0.01)
+sliderInput("gamma", label = "Prior Gamma: γ", min = 50, max = 150, value = 100, step = 1)
+sliderInput("gamma_1", label = "Prior Gamma 1: γ1", min = 15, max = 19, value = 17, step = 0.01)
+sliderInput("pi_1", label = "Prior Pi 1: π_1", min = 40, max = 60, value = 50, step = 0.1)
+sliderInput("pi_2", label = "Prior Pi 2: π_2", min = 0.2, max = 5, value = 2.6, step = 0.01)
+sliderInput("pi_3", label = "Prior Pi 3: π_3", min = 1, max = 20, value = 10.5, step = 0.01)
+sliderInput("phi", label = "Prior Phi: φ", min = .25, max = .65, value = .45, step = 0.01)
+
+
+
+
+
+
+
+
+
+'Temperature Parameters'
+
+
+# -------------------------------------------------- Temperature -------------------------------------------------- x
+
+sliderInput("temp", label = "Temperature °C", min = 20, max = 31, value = 25, step = 0.1)
+
+sliderInput("prior_mean", label = "mode 1 prior: μ", min = 18, max = 40, value = 33, step = 0.01)
+sliderInput("prior_sd", label = "mode 2 prior: σ2", min = 0.1, max = 10, value = 1, step = 0.01)
+
+sliderInput("prior_mean2", label = "mode 1 prior: μ", min = 18, max = 40, value = 30, step = 0.01)
+sliderInput("prior_sd2", label = "mode 2 prior: σ2", min = 0.1, max = 10, value = 1, step = 0.01)
+
+
+
+'Static Parameters'
+
+# -------------------------------------------------- Static Parameters -------------------------------------------------- x
+
+sliderInput("mu", label = "mu: μ", min = 50, max = 55, value = 52.5, step = 0.01)
+sliderInput("alpha", label = "alpha: α", min = 2450, max = 2964, value = 2707, step = 1)
+
+sliderInput("mu_t", label = "mu’: μ’", min = 10, max = 14, value = 12, step = 0.01)
+sliderInput("alpha_t", label = "alpha’: α’", min = 98, max = 191, value = 144, step = 1)
+
+
+sliderInput("f", label = "f’: Transmission Rate", min = 0.13, max=2, value = 0.19, step=0.01)
+sliderInput("h", label = "h’: Inoculation Rate", min = 0.07, max=3, value = 0.485, step=0.01)
+
+
+#------------- #------------- #------------- #------------- #------------- #------------- 
+
+
+```
+
+
+
+
+
+
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+
+
+### Yang Host Model
+
+```{r}
+
+
+
+# ------------------ parameterization ------------------x
+
+x = reactiveValues(df = NULL)
+plot_height <- reactiveValues(df=NULL)
+host_prop <- reactiveValues(df=NULL)
+mos_prop <- reactiveValues(df=NULL)
+
+
+
+# ---- initiate parameters ----x
+plot_height$ht <- 0.6
+host_prop$x1 <- host_prop$x2 <- host_prop$x3 <- host_prop$x4 <- host_prop$x5 <- host_prop$x6 <- host_prop$x7 <- 1/7
+mos_prop$y1 <- 0.5; mos_prop$y2 <- 0; mos_prop$y3 <- 0.5
+
+toListen <- reactive({list(input$temp, input$plot_height, input$host_prop, input$mos_prop)})
+
+
+
+
+observeEvent(toListen(), {
+  
+  plot_height$ht <- input$plot_height
+  
+  # initial populations
+  host_prop$x1 <- 1-input$host_prop; 
+  host_prop$x2 <- host_prop$x3 <- host_prop$x4 <- host_prop$x5 <- host_prop$x6 <- host_prop$x7 <- input$host_prop/6
+  mos_prop$y1 <- 1-input$mos_prop; mos_prop$y3 <- input$mos_prop
+})
+
+
+  
+
+# ------------------ parameterization2 ------------------x
+theta_final <- reactiveValues(df = NULL)
+gamma_final <- reactiveValues(df = NULL)
+pi_1_final <- reactiveValues(df = NULL)
+pi_2_final <- reactiveValues(df = NULL)
+pi_3_final <- reactiveValues(df = NULL)
+
+
+theta_final$x <- 2.5
+gamma_final$x <- 100
+pi_1_final$x <- 50
+pi_2_final$x <- 2.6
+pi_3_final$x <- 10.5
+
+
+
+
+# ------------------ Model ------------------ 
+
+yang_model <- function(t, x, parms) {
+  with(as.list(c(parms, x)), {
+    
+    dx1 <- mu + (theta + alpha)*x2 + pi_3*x6 - (h*y3 + mu)*x1
+    dx2 <- h*y3*x1 - (theta + gamma_1 + mu + alpha)*x2
+    dx3 <- gamma_1*x2 - (gamma + mu)*x3
+    dx4 <- gamma*x3 + h*y3*x5 + gamma_1*x7 - (pi_1 + mu)*x4
+    dx5 <- pi_1*x4 - (h*y3 + pi_2 + mu)*x5
+    dx6 <- pi_2*x5 + theta*x7 - (h*y3 + pi_3 + mu)*x6
+    dx7 <- h*y3*x6 - (theta + gamma_1 + mu)*x7
+    
+    dy1 <- phi*sig_1/(sig_1+mu_e) * (y1 + y2 + y3) - (f*x3 + mu_t + alpha_t)*y1
+    dy2 <- f*x3*y1 - (sig_2 + mu_t + alpha_t)*y2
+    dy3 <- sig_2*y2 - (mu_t + alpha_t)*y3
+    
+    output <- c(dx1, dx2, dx3, dx4, dx5, dx6, dx7, dy1, dy2, dy3)
+    list(output)
+  })
+}
+
+
+
+
+toListen2 <- reactive({list(input$temp, input$plot_height, input$host_prop, input$mos_prop, input$lit_rate,
+                           input$perc_ITNs_pop_under_5, input$perc_under_5_rec_antimal_drugs, input$std_gdp_growth_rate,
+                           input$rural_pop_perc)})
+
+
+
+
+
+
+
+renderPlot({
+  
+  # ----------------------------------------------- Update Parameters------------------------------------------------------------------------x
+  # ----------------------------------------------- Update Parameters------------------------------------------------------------------------x
+  
+  # ---- fit model ----x
+GLMM <- lmer(mal_inc_per_1000_at_risk ~ lit_rate_adults + perc_ITNs_pop_under_5 + perc_under_5_rec_antimal_drugs + 
+               std_gdp_growth_rate + rural_pop_perc + (year|Country.Name), data = data)
+yhat <- predict(GLMM)
+arg_data <- cbind(data, yhat)
+  
+  # ----------------------------------- superfluous computation -----------------------------------x
+  # ---- parameterize ----x
+  n_years <- input$years
+  country <- input$country
+  
+  # --- year range ---x
+  dates <- seq.Date(from = as.Date('2000-06-27', '%Y'), by = 'year', length.out = n_years) - (Sys.Date() - as.Date('2020-06-27'))
+  sub_data <- arg_data[arg_data$year %in% dates, ]
+  
+  # ---- compute new pred ---- x
+  compute_new_prediction <- function(country, data=sub_data) {
+    
+    # --- compute growth in each variable ---x
+    sub <- data[data$Country.Name == country,]
+    sub[sub==0] <- NA
+    sub <- na_ma(sub)
+    
+    # ---- comptute growth rates ---- x
+    sub <- sub %>% mutate(lit_rate_adults_gr = 
+                            ifelse(is.na((lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults), 1,
+                                   (lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults),
+                          
+                          perc_ITNs_pop_under_5_gr =
+                            ifelse(is.na((perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)), 1,
+                                   (perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)),
+                          
+                          perc_under_5_rec_antimal_drugs_gr = 
+                            ifelse(is.na((perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/
+                                           lag(perc_under_5_rec_antimal_drugs)), 1,
+                                   (perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/lag(perc_under_5_rec_antimal_drugs)),
+                          
+                          std_gdp_gr = 
+                            ifelse(is.na((std_gdp-lag(std_gdp))/lag(std_gdp)), 1,
+                                   (std_gdp-lag(std_gdp))/lag(std_gdp)),
+    
+                          std_gdp_growth_rate_gr = 
+                            ifelse(is.na((std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)), 1,
+                                   (std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)),
+    
+                          rural_pop_perc_gr = 
+                            ifelse(is.na((rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)), 1,
+                                   (rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)))
+    
+    
+    
+
+
+
+    # ---- inititional variables ----x
+    lit_rate_adults_2                 <- min(max(sub$lit_rate_adults[1] * input$lit_rate, 10), 90)
+    perc_ITNs_pop_under_5_2           <- min(max(sub$perc_ITNs_pop_under_5[1] * input$perc_ITNs_pop_under_5, 10), 90)
+    perc_under_5_rec_antimal_drugs_2  <- min(max(sub$perc_under_5_rec_antimal_drugs[1] * input$perc_under_5_rec_antimal_drugs, 10), 90)
+    std_gdp_2                         <- sub$std_gdp[1] * 1
+    std_gdp_growth_rate_2             <- sub$std_gdp_growth_rate[1] * input$std_gdp_growth_rate
+    rural_pop_perc_2                  <- min(max(sub$rural_pop_perc[1] * input$rural_pop_perc, 10), 90)
+    
+    
+    lit_rate_adults_2                 <- c(lit_rate_adults_2)
+    perc_ITNs_pop_under_5_2           <- c(perc_ITNs_pop_under_5_2)
+    perc_under_5_rec_antimal_drugs_2  <- c(perc_under_5_rec_antimal_drugs_2)
+    std_gdp_2                         <- c(std_gdp_2)
+    std_gdp_growth_rate_2             <- c(std_gdp_growth_rate_2)
+    rural_pop_perc_2                  <- c(rural_pop_perc_2)
+    
+    
+    # ---- compute new variables ----x
+    for (i in 2:nrow(sub)) {
+      lit_rate_adults_2 <- c(lit_rate_adults_2, lit_rate_adults_2[i-1] + lit_rate_adults_2[i-1]*sub$lit_rate_adults_gr[i])
+      perc_ITNs_pop_under_5_2 <- 
+        c(perc_ITNs_pop_under_5_2, perc_ITNs_pop_under_5_2[i-1] + perc_ITNs_pop_under_5_2[i-1]*sub$perc_ITNs_pop_under_5_gr[i])
+      perc_under_5_rec_antimal_drugs_2 <- c(perc_under_5_rec_antimal_drugs_2, perc_under_5_rec_antimal_drugs_2[i-1] +
+                                              perc_under_5_rec_antimal_drugs_2[i-1]*sub$perc_under_5_rec_antimal_drugs_gr[i])
+      std_gdp_2 <- c(std_gdp_2, std_gdp_2[i-1] + std_gdp_2[i-1]*sub$std_gdp_gr[i])
+      std_gdp_growth_rate_2 <- c(std_gdp_growth_rate_2, std_gdp_growth_rate_2[i-1] + std_gdp_growth_rate_2[i-1]*sub$std_gdp_growth_rate_gr[i])
+      rural_pop_perc_2 <- c(rural_pop_perc_2, rural_pop_perc_2[i-1] + rural_pop_perc_2[i-1]*sub$rural_pop_perc_gr[i])
+    }
+    
+    
+    # ---- create new dataset ----x 
+    sub <- data.frame(Country.Name = sub$Country.Name, year = sub$year, lit_rate_adults=lit_rate_adults_2,
+                      perc_ITNs_pop_under_5=perc_ITNs_pop_under_5_2, perc_under_5_rec_antimal_drugs=perc_under_5_rec_antimal_drugs_2,
+                      std_gdp=std_gdp_2, std_gdp_growth_rate=std_gdp_growth_rate_2, rural_pop_perc=rural_pop_perc_2)
+    
+    
+    # ---- fit ----x
+    sub$yhat <- predict(GLMM, sub)
+    sub
+
+}
+
+  sub <- compute_new_prediction(country)
+  
+  # ----- original change over T -----x
+  sub_data <- sub_data[sub_data$Country.Name == country,]
+  old_perc <- (sub_data[nrow(sub_data),]$yhat - sub_data[1,]$yhat)/sub_data[1,]$yhat
+  
+  new_perc <- (sub[nrow(sub),]$yhat - sub[1,]$yhat)/sub[1,]$yhat
+  change <- (old_perc-new_perc)*1000
+
+
+  min <- 1
+  max <- 4
+  x_min <- -100
+  x_max <- 100
+  x_range <- x_max-x_min
+  
+  adj_sigmoid <- function(x, min, max) {
+    min + (max-min) * 1/(1+exp(-x/(x_range/10)))
+  }
+  x <- seq(x_min, x_max, length.out = 100)
+  # --- plot under curve ----x  
+  xx <- c(0, seq(0,change,length.out = 98), change)
+  yy <- c(min, adj_sigmoid(seq(0,change,length.out = 98), min, max), min)
+  # ---- plot over curve ---x
+  xx_over <- c(x_min, seq(0,change,length.out = 98), x_min)
+  yy_over <- c(adj_sigmoid(0, min, max), adj_sigmoid(seq(0,change,length.out = 98), min, max), adj_sigmoid(change, min, max))
+  
+  # ----------------------------------- superfluous computation -----------------------------------x
+  
+  # new mean! 
+  theta_likelihood_mean <- adj_sigmoid(change, min, max)
+  
+  
+  ## Compute Posterior Means for all parameters  -----------------------------------x
+  gamma_likelihood_mean <- adj_sigmoid(change, 50, 150)
+  pi_1_likelihood_mean <- adj_sigmoid(change, 40, 60)
+  pi_2_likelihood_mean <- adj_sigmoid(change, 0.2, 5)
+  pi_3_likelihood_mean <- adj_sigmoid(change, 1, 20)
+  
+
+  
+  
+
+
+        
+        # ---- Theta ----x
+        # range 
+        x_ran <- seq(min, max, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$theta, sd=0.5)                        # prior 
+        dens <- dnorm(x_ran, mean = theta_likelihood_mean, sd = 0.5)           # density
+        posterior <- prior * dens                                              # posterior  
+      
+    
+        
+        # Updated Theta!!!        
+        theta_final$x <<- x_ran[which(posterior==max(posterior))]    
+        
+  ## Compute Posteriors!  -----------------------------------x
+        # ---- gamma ----x
+        x_ran <- seq(50, 150, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$gamma, sd=1)                          # prior 
+        dens <- dnorm(x_ran, mean = gamma_likelihood_mean, sd = 1)             # density
+        posterior <- prior * dens                                              # posterior
+        gamma_final$x <<- x_ran[which(posterior==max(posterior))]               # Updated Gamma!!! 
+        
+       
+                
+        # ---- Pi 1 ----x
+        x_ran <- seq(40, 60, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$pi_1, sd=1)                           # prior 
+        dens <- dnorm(x_ran, mean = pi_1_likelihood_mean, sd = 1)              # density
+        posterior <- prior * dens                                              # posterior
+        pi_1_final$x <<- x_ran[which(posterior==max(posterior))]                # Updated Pi 1!!! 
+        
+        
+        # ---- Pi 2 ----x
+        x_ran <- seq(0.2, 5, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$pi_2, sd=0.25)                        # prior 
+        dens <- dnorm(x_ran, mean = pi_2_likelihood_mean, sd = 0.25)           # density
+        posterior <- prior * dens                                              # posterior
+        pi_2_final$x <<- x_ran[which(posterior==max(posterior))]                # Updated Pi 2!!! 
+        
+        
+       # ---- Pi 3 ----x
+        x_ran <- seq(1, 20, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$pi_3, sd=1)                          # prior 
+        dens <- dnorm(x_ran, mean = pi_3_likelihood_mean, sd = 1)             # density
+        posterior <- prior * dens                                             # posterior
+        pi_3_final$x <<- x_ran[which(posterior==max(posterior))]               # Updated Pi 3!!! 
+        
+       
+      
+
+
+  
+  # ----------------------------------------------- Update Parameters------------------------------------------------------------------------x
+  # ----------------------------------------------- Update Parameters------------------------------------------------------------------------x
+
+
+  mu <- 1/ (input$mu) /365     
+  theta <- theta_final$x         
+  alpha <- 1/(input$alpha)/365 
+  gamma_1 <- 1/input$gamma_1          # gamma_1_final$x  
+  gamma <- 1/gamma_final$x       
+  pi_1 <- 1/pi_1_final$x       
+  pi_2 <-  1/(pi_2_final$x)/365  
+  pi_3 <- 1/(pi_3_final$x) /365  
+
+
+  
+
+  # ----- VECTOR -----
+
+  
+  phi <- input$phi        # day
+  alpha_t <- 1/input$alpha_t  # day
+  mu_t <- 1/input$mu_t         # day
+
+
+  standardized_proportional_temp <- (input$temp - 20)/31
+  sig_1 <- 26 - standardized_proportional_temp*(26-10)
+  sig_2 <- 22 - standardized_proportional_temp*(22-8)
+  
+  
+  sig_1 <- 1/sig_1
+  sig_2 <- 1/sig_2
+
+  mu_e <- sig_1 * ((phi/(mu_t+alpha_t))-1)
+  
+  
+  
+    # ----- INTERACTION ----
+  h <- input$h        # day
+  f <- input$f       # day 
+
+  
+  
+  # ---------- compute R0 ------------
+  t1 <<- gamma_1/(theta + gamma_1 + mu + alpha)
+  t2 <<- f/(gamma + mu)
+  t3 <<- sig_2/(sig_2 + mu_t + alpha_t)
+  t4 <<- h/(mu_t + alpha_t)
+  
+  
+
+  
+  # start <- c(x1=x1, x2=x2, x3=x3, x4=x4, x5=x5, x6=x6, x7=x7, y1=y1, y2=y2, y3=y3)
+  start <- c(x1=host_prop$x1, x2=host_prop$x2, x3=host_prop$x3, x4=host_prop$x4, x5=host_prop$x5, x6=host_prop$x6, x7=host_prop$x7,
+             y1=mos_prop$y1, y2=mos_prop$y2, y3=mos_prop$y3)
+  
+  
+  parms <- c(mu=mu, theta=theta, alpha=alpha, gamma_1=gamma_1, gamma=gamma, pi_1=pi_1, pi_2=pi_2,
+             pi_3=pi_3,
+  phi=phi, alpha_t=alpha_t, mu_t=mu_t, sig_1=sig_1, sig_2=sig_2, mu_e=mu_e, h=h, f=f)
+  times <- seq(0, 365*input$years, 1)
+  
+
+
+  run_d <<- ode(times=times, y=start, func=yang_model, parms=parms)
+
+  
+  plot(run_d[,2], col="green", ylim=c(0, plot_height$ht), type="l", main="Yang Malaria Host Model", ylab="Population Proportion", xlab='Days', frame=F)
+  lines(run_d[,3], col='orange')
+  lines(run_d[,4], col='red')
+  lines(run_d[,5], col='lightblue')
+  lines(run_d[,6], col='blue', lty=2)
+  lines(run_d[,7], col='steelblue')
+  lines(run_d[,8], col='darkblue', lty=2)
+
+  legend('topright', legend=c('x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7'),
+       col=c('green', 'orange', "red", 'lightblue', "blue", 'steelblue', 'darkblue'), lty=c(1,1,1,1,2,1,2), cex=0.8)
+
+})
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+### Mathematical Model Tranistion Dynamics
+
+Note: the full paper is available at www.zachwolpe.com/research
+
+#### The Yang Model
+
+A baseline mathematical model needs be derived. Mathematicians have been modelling malaria transmission dynamics for over a 100 years, & whilst advancements in modern medicine, computational equipment & ecological findings have improved these models, the original fundamental structure remains [3]. Originating in the Ross model in 1911, the general structure imposed is model two populations independently - humans & mosquitos - & derive their interaction as the parasite completes it’s life cycle. 
+
+Models generally trade-off computational feasibility & realism. In our case wish to utilise a sufficiently complicated model to allow for unique region parameterisation - yet maintaining computational efficiency & interpretability. The Bayesian parameter posterior estimation is a further computational burden, the aggregate computation should be considered.  
+
+Our model architecture should adequately consider the factors that distinguish countries. WHO identifies a number of direct & indirect influences on a countries malaria eradication efforts: population growth, urbanisation, climate change, land use & land cover changes (LULCC), social economic status & migration trends [4]. Indirect factors are equable notable - woman’s empowerment, access to technology, political structure, etc - however they yield complex, interactive effects that are difficult to formulate either theoretically or mathematically. 
+
+A further region specific parameter is development of malaria immunity among exposed populations. Communities repeatedly exposed malaria (as in many rural African communities) immunity can be gradually, naturally, established [5].  The nature of this immunity calls for immunity classification as a spectrum & not merely a binary response [5].
+
+We are going focus one three distinctive features of a region & implement a relevant model to capture these features - however the framework is readily extended to more encompassing frameworks:
+  1. Developed immunity
+  2. Climate change (temperature increase)
+  3. Social economic status (access to health & other resources) 
+
+
+#### Yang Model
+
+Hyun Yang proposed a model that captures the spectrum of immunity & derives temperature dependent parameters [5]. This model is then extended to to include a climate change & social economic status [6]. I will implement these models as soundly address the problem at hand. They are parameterised by theoretical research - allowing for a simple Bayesian extension for parameterisation, thus we arrive at BAMM. Notation from the original paper is used [5].
+
+The model is parameterised by 2 distinct populations (that of humans & mosquitos).
+
+Full model description available in the paper.
+
+
+#### Basic Reproduction Ratio: R0
+
+The model leads to an Basic Reproduction Ratio R0 formulation below.
+
+Which has four terms [5]:
+ 1. Probability the individual will survive the latent period & be in the infected state.
+ 2. Related to the number of susceptible mosquitoes infected with gametocytes by an infectious individual during his/her entire infective period.
+ 3. Probability that the mosquito will survive during latent period.
+ 4. The number of susceptible individuals infected with sporozoites by an infectious mosquito during it’s entire infectious life.
+
+Note that the first two terms related to the infection of susceptible mosquitos whilst the last two related to that of individuals [5]. Further, note that the immunity levels do not directly effect R0, however do so indirectly by delaying the recurrence an individual to becoming susceptible. 
+
+```{r}
+
+
+renderImage({
+  
+  
+  img <- magick::image_read('~/Desktop/MSc Advanced Analytics/MMID/Assignment/images/model images/R0.png')
+  tmpfile <- img %>%  image_resize(600) %>% 
+    image_write(tempfile(fileext='png'), format = 'png')
+  list(src = tmpfile, contentType = "image/png")
+})
+
+
+```
+
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+
+
+
+
+
+### GLMM
+
+```{r}
+library(imputeTS)
+
+
+
+# ---- fit model ----x
+GLMM <- lmer(mal_inc_per_1000_at_risk ~ lit_rate_adults + perc_ITNs_pop_under_5 + perc_under_5_rec_antimal_drugs + 
+               std_gdp_growth_rate + rural_pop_perc + (year|Country.Name), data = data)
+yhat <- predict(GLMM)
+arg_data <- cbind(data, yhat)
+
+
+
+
+
+
+
+renderPlot({
+  
+  # ---- parameterize ----x
+  n_years <- input$years
+  country <- input$country
+  
+  # --- year range ---x
+  dates <- seq.Date(from = as.Date('2000-06-27', '%Y'), by = 'year', length.out = n_years) - (Sys.Date() - as.Date('2020-06-27'))
+  sub_data <- arg_data[arg_data$year %in% dates, ]
+  
+  
+  # ---- compute new pred ---- x
+compute_new_prediction <- function(country, data=sub_data) {
+    
+    # --- compute growth in each variable ---x
+    sub <- data[data$Country.Name == country,]
+    sub[sub==0] <- NA
+    sub <- na_ma(sub)
+    
+    # ---- comptute growth rates ---- x
+    sub <- sub %>% mutate(lit_rate_adults_gr = 
+                            ifelse(is.na((lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults), 1,
+                                   (lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults),
+                          
+                          perc_ITNs_pop_under_5_gr =
+                            ifelse(is.na((perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)), 1,
+                                   (perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)),
+                          
+                          perc_under_5_rec_antimal_drugs_gr = 
+                            ifelse(is.na((perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/
+                                           lag(perc_under_5_rec_antimal_drugs)), 1,
+                                   (perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/lag(perc_under_5_rec_antimal_drugs)),
+                          
+                          std_gdp_gr = 
+                            ifelse(is.na((std_gdp-lag(std_gdp))/lag(std_gdp)), 1,
+                                   (std_gdp-lag(std_gdp))/lag(std_gdp)),
+    
+                          std_gdp_growth_rate_gr = 
+                            ifelse(is.na((std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)), 1,
+                                   (std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)),
+    
+                          rural_pop_perc_gr = 
+                            ifelse(is.na((rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)), 1,
+                                   (rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)))
+    
+    
+    
+
+
+
+    # ---- inititional variables ----x
+    lit_rate_adults_2                 <- min(max(sub$lit_rate_adults[1] * input$lit_rate, 10), 90)
+    perc_ITNs_pop_under_5_2           <- min(max(sub$perc_ITNs_pop_under_5[1] * input$perc_ITNs_pop_under_5, 10), 90)
+    perc_under_5_rec_antimal_drugs_2  <- min(max(sub$perc_under_5_rec_antimal_drugs[1] * input$perc_under_5_rec_antimal_drugs, 10), 90)
+    std_gdp_2                         <- sub$std_gdp[1] * 1
+    std_gdp_growth_rate_2             <- sub$std_gdp_growth_rate[1] * input$std_gdp_growth_rate
+    rural_pop_perc_2                  <- min(max(sub$rural_pop_perc[1] * input$rural_pop_perc, 10), 90)
+    
+    
+    lit_rate_adults_2                 <- c(lit_rate_adults_2)
+    perc_ITNs_pop_under_5_2           <- c(perc_ITNs_pop_under_5_2)
+    perc_under_5_rec_antimal_drugs_2  <- c(perc_under_5_rec_antimal_drugs_2)
+    std_gdp_2                         <- c(std_gdp_2)
+    std_gdp_growth_rate_2             <- c(std_gdp_growth_rate_2)
+    rural_pop_perc_2                  <- c(rural_pop_perc_2)
+    
+    
+    # ---- compute new variables ----x
+    for (i in 2:nrow(sub)) {
+      lit_rate_adults_2 <- c(lit_rate_adults_2, lit_rate_adults_2[i-1] + lit_rate_adults_2[i-1]*sub$lit_rate_adults_gr[i])
+      perc_ITNs_pop_under_5_2 <- 
+        c(perc_ITNs_pop_under_5_2, perc_ITNs_pop_under_5_2[i-1] + perc_ITNs_pop_under_5_2[i-1]*sub$perc_ITNs_pop_under_5_gr[i])
+      perc_under_5_rec_antimal_drugs_2 <- c(perc_under_5_rec_antimal_drugs_2, perc_under_5_rec_antimal_drugs_2[i-1] +
+                                              perc_under_5_rec_antimal_drugs_2[i-1]*sub$perc_under_5_rec_antimal_drugs_gr[i])
+      std_gdp_2 <- c(std_gdp_2, std_gdp_2[i-1] + std_gdp_2[i-1]*sub$std_gdp_gr[i])
+      std_gdp_growth_rate_2 <- c(std_gdp_growth_rate_2, std_gdp_growth_rate_2[i-1] + std_gdp_growth_rate_2[i-1]*sub$std_gdp_growth_rate_gr[i])
+      rural_pop_perc_2 <- c(rural_pop_perc_2, rural_pop_perc_2[i-1] + rural_pop_perc_2[i-1]*sub$rural_pop_perc_gr[i])
+    }
+    
+    
+    # ---- create new dataset ----x 
+    sub <- data.frame(Country.Name = sub$Country.Name, year = sub$year, lit_rate_adults=lit_rate_adults_2,
+                      perc_ITNs_pop_under_5=perc_ITNs_pop_under_5_2, perc_under_5_rec_antimal_drugs=perc_under_5_rec_antimal_drugs_2,
+                      std_gdp=std_gdp_2, std_gdp_growth_rate=std_gdp_growth_rate_2, rural_pop_perc=rural_pop_perc_2)
+    
+    
+    # ---- fit ----x
+    sub$yhat <- predict(GLMM, sub)
+    sub
+
+}
+
+  
+  sub <- compute_new_prediction(country)
+
+  plot_for_countries <- function(country) {
+    sub_data[sub_data$Country.Name==country,] %>% 
+    ggplot(aes(x=year, y=mal_inc_per_1000_at_risk)) + geom_point(col='darkred') + geom_line(col='#800000') +
+    geom_point(aes(x=year, y=yhat), col='darkblue') +
+      geom_line(aes(x=year, y=yhat), col='steelblue') + ggtitle(country) +
+      ylab('Malaria Incidence (per 1000 people at Risk)') + xlab('Year') +  theme_minimal() + 
+      geom_line(aes(x = sub$year, y=sub$yhat), col='pink') + geom_point(aes(x = sub$year, y=sub$yhat), col='pink') +
+      theme(plot.title =element_text(hjust = 0.5))
+  }
+  
+  plot_for_countries(country)
+})
+
+
+```
+
+
+
+
+
+### Heirarchical (Mixed Effect) Model
+
+#### Statistical Model
+
+The mathematical model is centred around varying levels of immunity, we wish to use the data to better inform immunological memory transition dynamics. The only variable directly related to this is % children under 5 receiving antimalarial drugs.
+
+The build up of immunological memory can be attributed too:
+  - Constant exposure to malaria (which is regional specific & highly dangerous, purely a consequence of negligence)
+  - Access to malarial treatments
+
+_We with to learn a posterior that best captures domain expertise in the prior & actual data in the likelihood to produce a feasible range of posterior distributions._
+
+We thus fit a Bayesian posterior to each parameter.
+
+
+#### Priors
+Priors for each of the variables are considered to be unit variance gaussians with means to be specified for the country of interest. Allowing for domain knowledge representation over the parameters: $\{\theta, \gamma, \pi_1, \pi_2, \pi_3\}$.
+
+#### Likelihood functions
+Given the current data availability we cannot distinguish between factors that influence the varying degrees of immunological memory & resistance, as such a single pseudo-likelihood is computed as a proxy to update the individual priors.
+
+#### Model Specification
+Taking the available SES data, we formulate a dataset & design a model to capture the relationship between malaria incidence & SES factors. The following data is used:
+	 $y$: incidence per 1000 people at risk
+	 $x_1$: literacy rates
+	 $x_2$: GDP growth 
+	 $x_3$: % of population under 5 sleeping under ITNs
+	 $x_4$: % of population under 5 receiving anti-malaria drugs
+	 $x_5$: Rural population %
+
+
+The data has a temporal element which needs be accounted for, as such, the response variable is modeled as a hierarchical/mixed effects model that is allowed random deviation across time & individual countries. This hierarchical model structure is similar to a standard generalized linear model, however different in that the covariance dependence structure of the covariates (individual countries) are allowed to vary overtime [7]. This mixed effect model is fit via REML (residual maximum likelihood, where the likelihood is given by the formula below.
+
+```{r}
+
+
+
+library(magick)
+renderImage({
+  
+  
+  
+  img <- magick::image_read('~/Desktop/MSc Advanced Analytics/MMID/Assignment/images/model images/REML.png')
+  tmpfile <- img %>%  image_resize(550) %>% 
+    image_write(tempfile(fileext='png'), format = 'png')
+  list(src = tmpfile, contentType = "image/png")
+})
+
+
+```
+
+
+
+
+
+
+
+
+
+
+Immunological Posterior Derivation
+=====================================
+
+
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+
+### Sigmoid Transformation: Theta
+
+```{r}
+
+
+
+renderPlot({
+  
+  # ---- parameterize ----x
+  n_years <- input$years
+  country <- input$country
+  
+  # --- year range ---x
+  dates <- seq.Date(from = as.Date('2000-06-27', '%Y'), by = 'year', length.out = n_years) - (Sys.Date() - as.Date('2020-06-27'))
+  sub_data <- arg_data[arg_data$year %in% dates, ]
+  
+  
+  # ---- compute new pred ---- x
+  compute_new_prediction <- function(country, data=sub_data) {
+    
+    # --- compute growth in each variable ---x
+    sub <- data[data$Country.Name == country,]
+    sub[sub==0] <- NA
+    sub <- na_ma(sub)
+    
+    # ---- comptute growth rates ---- x
+    sub <- sub %>% mutate(lit_rate_adults_gr = 
+                            ifelse(is.na((lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults), 1,
+                                   (lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults),
+                          
+                          perc_ITNs_pop_under_5_gr =
+                            ifelse(is.na((perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)), 1,
+                                   (perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)),
+                          
+                          perc_under_5_rec_antimal_drugs_gr = 
+                            ifelse(is.na((perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/
+                                           lag(perc_under_5_rec_antimal_drugs)), 1,
+                                   (perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/lag(perc_under_5_rec_antimal_drugs)),
+                          
+                          std_gdp_gr = 
+                            ifelse(is.na((std_gdp-lag(std_gdp))/lag(std_gdp)), 1,
+                                   (std_gdp-lag(std_gdp))/lag(std_gdp)),
+    
+                          std_gdp_growth_rate_gr = 
+                            ifelse(is.na((std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)), 1,
+                                   (std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)),
+    
+                          rural_pop_perc_gr = 
+                            ifelse(is.na((rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)), 1,
+                                   (rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)))
+    
+    
+    
+
+
+
+    # ---- inititional variables ----x
+    lit_rate_adults_2                 <- min(max(sub$lit_rate_adults[1] * input$lit_rate, 10), 90)
+    perc_ITNs_pop_under_5_2           <- min(max(sub$perc_ITNs_pop_under_5[1] * input$perc_ITNs_pop_under_5, 10), 90)
+    perc_under_5_rec_antimal_drugs_2  <- min(max(sub$perc_under_5_rec_antimal_drugs[1] * input$perc_under_5_rec_antimal_drugs, 10), 90)
+    std_gdp_2                         <- sub$std_gdp[1] * 1
+    std_gdp_growth_rate_2             <- sub$std_gdp_growth_rate[1] * input$std_gdp_growth_rate
+    rural_pop_perc_2                  <- min(max(sub$rural_pop_perc[1] * input$rural_pop_perc, 10), 90)
+    
+    
+    lit_rate_adults_2                 <- c(lit_rate_adults_2)
+    perc_ITNs_pop_under_5_2           <- c(perc_ITNs_pop_under_5_2)
+    perc_under_5_rec_antimal_drugs_2  <- c(perc_under_5_rec_antimal_drugs_2)
+    std_gdp_2                         <- c(std_gdp_2)
+    std_gdp_growth_rate_2             <- c(std_gdp_growth_rate_2)
+    rural_pop_perc_2                  <- c(rural_pop_perc_2)
+    
+    
+    # ---- compute new variables ----x
+    for (i in 2:nrow(sub)) {
+      lit_rate_adults_2 <- c(lit_rate_adults_2, lit_rate_adults_2[i-1] + lit_rate_adults_2[i-1]*sub$lit_rate_adults_gr[i])
+      perc_ITNs_pop_under_5_2 <- 
+        c(perc_ITNs_pop_under_5_2, perc_ITNs_pop_under_5_2[i-1] + perc_ITNs_pop_under_5_2[i-1]*sub$perc_ITNs_pop_under_5_gr[i])
+      perc_under_5_rec_antimal_drugs_2 <- c(perc_under_5_rec_antimal_drugs_2, perc_under_5_rec_antimal_drugs_2[i-1] +
+                                              perc_under_5_rec_antimal_drugs_2[i-1]*sub$perc_under_5_rec_antimal_drugs_gr[i])
+      std_gdp_2 <- c(std_gdp_2, std_gdp_2[i-1] + std_gdp_2[i-1]*sub$std_gdp_gr[i])
+      std_gdp_growth_rate_2 <- c(std_gdp_growth_rate_2, std_gdp_growth_rate_2[i-1] + std_gdp_growth_rate_2[i-1]*sub$std_gdp_growth_rate_gr[i])
+      rural_pop_perc_2 <- c(rural_pop_perc_2, rural_pop_perc_2[i-1] + rural_pop_perc_2[i-1]*sub$rural_pop_perc_gr[i])
+    }
+    
+    
+    # ---- create new dataset ----x 
+    sub <- data.frame(Country.Name = sub$Country.Name, year = sub$year, lit_rate_adults=lit_rate_adults_2,
+                      perc_ITNs_pop_under_5=perc_ITNs_pop_under_5_2, perc_under_5_rec_antimal_drugs=perc_under_5_rec_antimal_drugs_2,
+                      std_gdp=std_gdp_2, std_gdp_growth_rate=std_gdp_growth_rate_2, rural_pop_perc=rural_pop_perc_2)
+    
+    
+    # ---- fit ----x
+    sub$yhat <- predict(GLMM, sub)
+    sub
+
+}
+
+  sub <- compute_new_prediction(country)
+  
+  # ----- original change over T -----x
+  sub_data <- sub_data[sub_data$Country.Name == country,]
+  old_perc <- (sub_data[nrow(sub_data),]$yhat - sub_data[1,]$yhat)/sub_data[1,]$yhat
+  
+  new_perc <- (sub[nrow(sub),]$yhat - sub[1,]$yhat)/sub[1,]$yhat
+  change <- (old_perc-new_perc)*1000
+
+
+  min <- 1
+  max <- 4
+  x_min <- -100
+  x_max <- 100
+  x_range <- x_max-x_min
+  
+  
+  adj_sigmoid <- function(x, min, max) {
+    min + (max-min) * 1/(1+exp(-x/(x_range/10)))
+  }
+
+  x <- seq(x_min, x_max, length.out = 100)
+
+  # --- plot under curve ----x  
+  xx <- c(0, seq(0,change,length.out = 98), change)
+  yy <- c(min, adj_sigmoid(seq(0,change,length.out = 98), min, max), min)
+
+  # ---- plot over curve ---x
+  xx_over <- c(x_min, seq(0,change,length.out = 98), x_min)
+  yy_over <- c(adj_sigmoid(0, min, max), adj_sigmoid(seq(0,change,length.out = 98), min, max), adj_sigmoid(change, min, max))
+
+  
+  # new mean! 
+  theta_likelihood_mean <<- adj_sigmoid(change, min, max)
+  
+  
+  # ---- plot ---- x 
+  plot(c(x, x_max), c(adj_sigmoid(x, min, max),1), type='l', main='Sigmoid Transform: θ', frame=F, col='pink',
+       ylab='Theta likelihood mean', xlab = 'simulated % in Malaria Incidence') 
+  polygon(c(x, x_max), c(adj_sigmoid(x, min, max),1), col=adjustcolor("pink",alpha.f=0.2), border=NA)
+  polygon(xx, yy, col=adjustcolor("lightblue",alpha.f=0.4), border=NA)
+  polygon(xx_over, yy_over, col=adjustcolor("lightblue",alpha.f=0.4), border=NA)
+
+  
+  
+  
+   
+
+})
+
+
+```
+
+
+
+
+### Teperature Generating Function
+
+```{r}
+
+t<-seq(0,100,1)
+beta1<-1
+beta0<-1
+
+y <- cos(t/2)*3   + cos(t)*3 + 28
+
+
+plot(t, y, type="l", frame=F, main='Simulated Nigeria Temperature Data', col='steelblue', xlab='', ylab='temperature')
+```
+
+
+
+
+
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+
+
+
+
+
+
+
+### Theta Posterior
+
+```{r}
+
+
+renderPlot({
+  
+  
+  # ----------------------------------- superfluous computation -----------------------------------x
+  # ---- parameterize ----x
+  n_years <- input$years
+  country <- input$country
+  
+  # --- year range ---x
+  dates <- seq.Date(from = as.Date('2000-06-27', '%Y'), by = 'year', length.out = n_years) - (Sys.Date() - as.Date('2020-06-27'))
+  sub_data <- arg_data[arg_data$year %in% dates, ]
+  
+  # ---- compute new pred ---- x
+  compute_new_prediction <- function(country, data=sub_data) {
+    
+    # --- compute growth in each variable ---x
+    sub <- data[data$Country.Name == country,]
+    sub[sub==0] <- NA
+    sub <- na_ma(sub)
+    
+    # ---- comptute growth rates ---- x
+    sub <- sub %>% mutate(lit_rate_adults_gr = 
+                            ifelse(is.na((lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults), 1,
+                                   (lit_rate_adults-lag(lit_rate_adults))/lit_rate_adults),
+                          
+                          perc_ITNs_pop_under_5_gr =
+                            ifelse(is.na((perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)), 1,
+                                   (perc_ITNs_pop_under_5-lag(perc_ITNs_pop_under_5))/lag(perc_ITNs_pop_under_5)),
+                          
+                          perc_under_5_rec_antimal_drugs_gr = 
+                            ifelse(is.na((perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/
+                                           lag(perc_under_5_rec_antimal_drugs)), 1,
+                                   (perc_under_5_rec_antimal_drugs-lag(perc_under_5_rec_antimal_drugs))/lag(perc_under_5_rec_antimal_drugs)),
+                          
+                          std_gdp_gr = 
+                            ifelse(is.na((std_gdp-lag(std_gdp))/lag(std_gdp)), 1,
+                                   (std_gdp-lag(std_gdp))/lag(std_gdp)),
+    
+                          std_gdp_growth_rate_gr = 
+                            ifelse(is.na((std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)), 1,
+                                   (std_gdp_growth_rate-lag(std_gdp_growth_rate))/lag(std_gdp_growth_rate)),
+    
+                          rural_pop_perc_gr = 
+                            ifelse(is.na((rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)), 1,
+                                   (rural_pop_perc-lag(rural_pop_perc))/lag(rural_pop_perc)))
+    
+    
+    
+
+
+
+    # ---- inititional variables ----x
+    lit_rate_adults_2                 <- min(max(sub$lit_rate_adults[1] * input$lit_rate, 10), 90)
+    perc_ITNs_pop_under_5_2           <- min(max(sub$perc_ITNs_pop_under_5[1] * input$perc_ITNs_pop_under_5, 10), 90)
+    perc_under_5_rec_antimal_drugs_2  <- min(max(sub$perc_under_5_rec_antimal_drugs[1] * input$perc_under_5_rec_antimal_drugs, 10), 90)
+    std_gdp_2                         <- sub$std_gdp[1] * 1
+    std_gdp_growth_rate_2             <- sub$std_gdp_growth_rate[1] * input$std_gdp_growth_rate
+    rural_pop_perc_2                  <- min(max(sub$rural_pop_perc[1] * input$rural_pop_perc, 10), 90)
+    
+    
+    lit_rate_adults_2                 <- c(lit_rate_adults_2)
+    perc_ITNs_pop_under_5_2           <- c(perc_ITNs_pop_under_5_2)
+    perc_under_5_rec_antimal_drugs_2  <- c(perc_under_5_rec_antimal_drugs_2)
+    std_gdp_2                         <- c(std_gdp_2)
+    std_gdp_growth_rate_2             <- c(std_gdp_growth_rate_2)
+    rural_pop_perc_2                  <- c(rural_pop_perc_2)
+    
+    
+    # ---- compute new variables ----x
+    for (i in 2:nrow(sub)) {
+      lit_rate_adults_2 <- c(lit_rate_adults_2, lit_rate_adults_2[i-1] + lit_rate_adults_2[i-1]*sub$lit_rate_adults_gr[i])
+      perc_ITNs_pop_under_5_2 <- 
+        c(perc_ITNs_pop_under_5_2, perc_ITNs_pop_under_5_2[i-1] + perc_ITNs_pop_under_5_2[i-1]*sub$perc_ITNs_pop_under_5_gr[i])
+      perc_under_5_rec_antimal_drugs_2 <- c(perc_under_5_rec_antimal_drugs_2, perc_under_5_rec_antimal_drugs_2[i-1] +
+                                              perc_under_5_rec_antimal_drugs_2[i-1]*sub$perc_under_5_rec_antimal_drugs_gr[i])
+      std_gdp_2 <- c(std_gdp_2, std_gdp_2[i-1] + std_gdp_2[i-1]*sub$std_gdp_gr[i])
+      std_gdp_growth_rate_2 <- c(std_gdp_growth_rate_2, std_gdp_growth_rate_2[i-1] + std_gdp_growth_rate_2[i-1]*sub$std_gdp_growth_rate_gr[i])
+      rural_pop_perc_2 <- c(rural_pop_perc_2, rural_pop_perc_2[i-1] + rural_pop_perc_2[i-1]*sub$rural_pop_perc_gr[i])
+    }
+    
+    
+    # ---- create new dataset ----x 
+    sub <- data.frame(Country.Name = sub$Country.Name, year = sub$year, lit_rate_adults=lit_rate_adults_2,
+                      perc_ITNs_pop_under_5=perc_ITNs_pop_under_5_2, perc_under_5_rec_antimal_drugs=perc_under_5_rec_antimal_drugs_2,
+                      std_gdp=std_gdp_2, std_gdp_growth_rate=std_gdp_growth_rate_2, rural_pop_perc=rural_pop_perc_2)
+    
+    
+    # ---- fit ----x
+    sub$yhat <- predict(GLMM, sub)
+    sub
+
+}
+
+  sub <- compute_new_prediction(country)
+  
+  # ----- original change over T -----x
+  sub_data <- sub_data[sub_data$Country.Name == country,]
+  old_perc <- (sub_data[nrow(sub_data),]$yhat - sub_data[1,]$yhat)/sub_data[1,]$yhat
+  
+  new_perc <- (sub[nrow(sub),]$yhat - sub[1,]$yhat)/sub[1,]$yhat
+  change <- (old_perc-new_perc)*1000
+
+
+  min <- 1
+  max <- 4
+  x_min <- -100
+  x_max <- 100
+  x_range <- x_max-x_min
+  
+  adj_sigmoid <- function(x, min, max) {
+    min + (max-min) * 1/(1+exp(-x/(x_range/10)))
+  }
+  x <- seq(x_min, x_max, length.out = 100)
+  # --- plot under curve ----x  
+  xx <- c(0, seq(0,change,length.out = 98), change)
+  yy <- c(min, adj_sigmoid(seq(0,change,length.out = 98), min, max), min)
+  # ---- plot over curve ---x
+  xx_over <- c(x_min, seq(0,change,length.out = 98), x_min)
+  yy_over <- c(adj_sigmoid(0, min, max), adj_sigmoid(seq(0,change,length.out = 98), min, max), adj_sigmoid(change, min, max))
+  
+  # ----------------------------------- superfluous computation -----------------------------------x
+  
+  # new mean! 
+  theta_likelihood_mean <- adj_sigmoid(change, min, max)
+  
+  
+  ## Compute Posterior Means for all parameters  -----------------------------------x
+  gamma_likelihood_mean <- adj_sigmoid(change, 50, 150)
+  pi_1_likelihood_mean <- adj_sigmoid(change, 40, 60)
+  pi_2_likelihood_mean <- adj_sigmoid(change, 0.2, 5)
+  pi_3_likelihood_mean <- adj_sigmoid(change, 1, 20)
+  
+
+  
+  
+  
+  
+    plot_densities <- function(x_ran, density, prior, posterior, title) {
+        
+        
+      plot(c(x_ran[1], x_ran, x_ran[length(x_ran)]), c(0, density, 0), 
+           col='darkblue', ylab='density', xlab='θ', main=title, frame=F, type='l')
+      polygon(c(x_ran[1], x_ran, x_ran[length(x_ran)]), c(0, density, 0), col=adjustcolor("darkblue",alpha.f=0.1), border=NA) 
+      
+      
+      
+      lines(c(x_ran[1], x_ran, x_ran[length(x_ran)]), c(0, prior, 0), col='darkgreen', type='l')
+      polygon(c(x_ran[1], x_ran, x_ran[length(x_ran)]), c(0, prior, 0), col=adjustcolor("darkgreen",alpha.f=0.1), border=NA) 
+      
+      lines(c(x_ran[1], x_ran, x_ran[length(x_ran)]), c(0, posterior, 0), col='darkred', type='l')
+      
+      abline(v=x_ran[which(posterior==max(posterior))], col='black')
+      polygon(c(x_ran[1], x_ran, x_ran[length(x_ran)]), c(0, posterior, 0), col=adjustcolor("darkred",alpha.f=0.4), border=NA)
+      legend('bottomleft', legend=c('density', 'prior', 'posterior'), col=c('darkblue', 'darkgreen', 'darkred'), lty=1, cex=0.8)
+    }
+
+        
+        # ---- Theta ----x
+        # range 
+        x_ran <- seq(min, max, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$theta, sd=0.5)                        # prior 
+        dens <- dnorm(x_ran, mean = theta_likelihood_mean, sd = 0.5)           # density
+        posterior <- prior * dens                                              # posterior  
+      
+        plot_densities(x_ran, dens, prior, posterior, 'Posterior: θ')
+    
+        
+        # Updated Theta!!!        
+        theta_final$x <<- x_ran[which(posterior==max(posterior))]    
+        
+  ## Compute Posteriors!  -----------------------------------x
+        # ---- gamma ----x
+        x_ran <- seq(50, 150, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$gamma, sd=1)                          # prior 
+        dens <- dnorm(x_ran, mean = gamma_likelihood_mean, sd = 1)             # density
+        posterior <- prior * dens                                              # posterior
+        gamma_final$x <<- x_ran[which(posterior==max(posterior))]               # Updated Gamma!!! 
+        
+       
+                
+        # ---- Pi 1 ----x
+        x_ran <- seq(40, 60, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$pi_1, sd=1)                           # prior 
+        dens <- dnorm(x_ran, mean = pi_1_likelihood_mean, sd = 1)              # density
+        posterior <- prior * dens                                              # posterior
+        pi_1_final$x <<- x_ran[which(posterior==max(posterior))]                # Updated Pi 1!!! 
+        
+        
+        # ---- Pi 2 ----x
+        x_ran <- seq(0.2, 5, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$pi_2, sd=0.25)                        # prior 
+        dens <- dnorm(x_ran, mean = pi_2_likelihood_mean, sd = 0.25)           # density
+        posterior <- prior * dens                                              # posterior
+        pi_2_final$x <<- x_ran[which(posterior==max(posterior))]                # Updated Pi 2!!! 
+        
+        
+       # ---- Pi 3 ----x
+        x_ran <- seq(1, 20, length.out = 100)
+        prior <- dnorm(x_ran, mean=input$pi_3, sd=1)                          # prior 
+        dens <- dnorm(x_ran, mean = pi_3_likelihood_mean, sd = 1)             # density
+        posterior <- prior * dens                                             # posterior
+        pi_3_final$x <<- x_ran[which(posterior==max(posterior))]               # Updated Pi 3!!! 
+        
+       
+      
+
+})
+
+```
+
+
+
+
+
+
+### Temperture Posterior  
+
+```{r}
+
+
+likelihood <- function(t) {
+  cos(t/2)*3  + cos(t)*3 + 28
+}
+
+y <- likelihood(1:1000)
+dy <- density(y)
+
+x_range <- seq(22,40,length.out = 512)
+
+
+
+renderPlot({
+
+  # --- compute prior ---x
+  prior <- c(rnorm(512/2, input$prior_mean, input$prior_sd), rnorm(512/2, input$prior_mean2, input$prior_sd2))
+  dp <- density(prior)
+  posterior <- dy$y* dp$y
+
+
+  # --- likelihood ---x
+  plot(dy, col='darkblue', ylab='density', xlab='Temperature', main='Posterior Distribution of Temperature', frame=F, ylim=c(0,0.3))
+  polygon(dy, col=adjustcolor("darkblue",alpha.f=0.05), border=NA) 
+  
+  # --- prior ---x
+  lines(dp, col='darkgreen', type='l')
+  polygon(dp, col=adjustcolor("darkgreen",alpha.f=0.05), border=NA) 
+  
+  # --- posterior ---x
+  lines(x_range, posterior, col='darkred', type='l')
+  abline(v=x_range[which(posterior==max(posterior))], col='steelblue', size=2)
+  polygon(x_range, posterior, col=adjustcolor("darkred",alpha.f=0.4), border=NA)
+  
+  legend('topright', legend=c('likelihood', 'prior', 'posterior'), col=c('darkblue', 'darkgreen', 'darkred'), lty=1, cex=0.8)
+
+  
+})
+```
+
+
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+### Theoretical background
+
+#### Informing posteriors in the Yang Model
+
+Now that we have a functional model that captures how SES factors influence malaria incidence, we want to used these variable to inform the parameterisation of the original mathematical model. This needs to be done indirectly so we need to define a mapping between the hierarchical model and the Yang (mathematical) model.
+
+Recall the prior is set by a domain expert, as such we leave priors as the mean of each parameter range (though can be changed readily) & we want to use this hierarchical model as a pseudo-likelihood (a term I am using as it is not a real likelihood but we use it as the likelihood in the Bayesian sense).
+
+Secondly, a key feature in the model is to assess how changes in the mixed effects model inputs change the Yang model. To achieve this we mad the change in forecast (if the mixed effects model is adjusted) to the mean of the parameters . I will further explain through an example (from the paper):
+
+Suppose we are looking at malaria incidence in sub-saharan African, we can the data to inform the yang model.
+
+First we fit the model & received our generic prediction, we then wish to assess the impact of more a higher proportion of children receiving anti-malaria drugs & sleeping under ITNs (insecticide treated nets), we thus change these parameters to 2.5 each in our mixed effects model - resulting in a scenario test where 2.5 times the number of children use ITNs & have access to antimalarial drugs). The figure besides shows the effect of this change (difference between the pink & blue lines.
+
+This slight improvement should be reflecting in the Yang model to assess transition dynamics. The difference between the two function (pink & blue) is then mapped to the posterior of each  variable. This is done by a transforming the different between the two to an equivalent change in mean for each of the  variable. Assuming a selected prior, this change in mean is mapped via a sigmoid function (selected to over-emphasise small changes & exhibit decreasing marginal return as one could expect in real life). This is done for all variable however it is visualised for theta.
+
+This mechanism allows us to use the change in fit as the pseudo-likelihood function to inform the posterior of each parameter $\theta, \pi_1$ etc. The posteriors are then used in the Yang model to predict the original transition dynamics between immunological groups.
+
+#### Temperature 
+
+Whilst it can appear tedious, the Bayesian approach is ideal in this setting as in reality incorporating prior knowledge is certainly advantageous. We may have domain expertise, previously collected data or regional specific information that can better inform our analysis. 
+
+##### Modelling Temperature
+Temperature can be incorporated via two methods: average regional temperature used to parameterise the model or conducting a cosine or Fourier transform to add a temperature-temporal element to the transition dynamics of the model (capturing seasonality). We will conduct the former & leave the latter for later work. Unfortunately most historical weather datasets are restricted access on paid API’s - as a make shift we will generate data that mimics our primary country of focus: Nigeria. This is a suitable alternative to illustrate the principle of Bayesian fitting. We will also generate a prior.
+
+##### Prior
+Let’s assume the mean temperature over a region (West Africa) follows a Gaussian however we don’t have much information. We want a mean temperature estimate, & the true data is bimodal (a consequence of seasonality). The min & max temperature’s in West Africa are given as °C to °C - we formate a flat bimodal-gaussian prior over this range with a very high variance - essentially non-informative. The natural of the model allows one to tweak the prior in light of better information - the dashboard allows for these alterations.
+
+##### Likelihood
+The likelihood describes the observed data. Since we cannot obtain actual data without using a paid API, we will generate synthetic data to mimic the temperature patterns of Nigeria. The graph on the left is a snapshot of actual Nigeria temperature data, the graph on the right is our simulated data, drawn from the function:
+
+$$f(x) = cos(\frac{x}{2})^3 + cos(x)^3 + 28$$
+
+##### Posterior Derivation 
+As in any Bayesian model, we need to derive the posterior as a function of the likelihood, prior & marginal likelihood. In our model, we wish to find the posterior of $\pi(\tau|X)$ proportional to our prior (known assumptions of the regional temperature) & likelihood (Nigeria specific data).
+
+$$posterior \propto likelihood \; \times prior$$
+
+
+
+
+Convolutional Neural Nets for Malaria Diagnosis
+=====================================
+
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+
+titlePanel('Make a Prediction')
+
+actionButton("predict", "Predict", 
+             style="color: 	#fbf7f5; background-color: #4682b4; border-color: #fbf7f5")
+
+```
+
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+
+### Machine Learning against Malaria
+
+#### Statistical Learning
+
+Machine & statistical learning techniques can aid the fight against malaria in a multitude of ways - that extend far beyond parameterising mathematical compartmental models. To illustrate an example of other possible applications of statistical learning, consider the problem of accurate, complete diagnosis.
+
+#### Malaria Diagnosis
+
+As aforementioned, in attempts to analyse any disease, we good, accurate data is imperative. Unfortunately it is almost always problematic. In the case of malaria, testing individuals in deeply impoverished communities is arduous. Assuming we can get access to members of those communities, our two testing options are:
+  - Utilise a testkit 
+  - Blood examination by an expert
+
+The former is the simplest & most reliable option, however resources are scarce & it may be infeasible to provide enough testing kits. The latter is only applicable if we have access to a physician. 
+
+Here I pose an alternative that elevates these resource constraints. 
+
+
+#### Convolutional Neural Network
+CNNs (convolutional neural networks) are a machine learning model architecture that using convolutional techniques to process high-resolution image data to allow for pattern discover. One can consider a colour image a (3 x n x p) dimensional sparse numerical matrix where n & p are the number of pixels & 3 represents the corresponding RGB values. 
+
+CNNs process images for pattern discover, often doing so far superior to human experts (one can think of a human expert as simpler running a more complex variant of this model architecture in their mind - we call this expertise).
+
+
+
+#### CNNs for Malaria Diagnosis
+In the instance of malaria diagnosis, an expert would examine a blood sample & try to identify the parasite in the blood sample. Here we apply a CNN to detect the parasite, given an image.
+
+#### Dataset 
+The labeled dataset utilised contains 27’558 images of blood samples - even split between infected & uninfected - and is available on the National Library of Medicine’s (NLM) website [7].  
+
+#### Results 
+The data was split into training & validation sets, thereafter the model was trained to detect parasites in the blood samples. The model architecture is available in the appendix & all code is available on the GitHub.
+
+_*Accuracy = 90%*_ 
+
+90% accuracy was achieved - which may cause alarm of overfitting, thought the data was split into training-testing sets. I do not feel this result to be particularly alarming as the nature of the data is archetypical of the type of issues that CNN’s perform particularly well on. Additional metrics were not examined as false-positive/negatives are roughly evenly distributed, but would follow as a natural extension.
+
+Not only can this algorithm be used anywhere where a blood sample can be taken & there is computer access; it is able to provide more accurate results than a trained professional. It’s marginal cost is zero, & does not warrant medical expertise past the ability to draw blood.
+
+
+#### Prediction 
+One can see the on clicking _predict_ a prediction (‘parasitized’ or ‘uninfected’), the model’s confidence in the prediction & whether or not the prediction is accurate, is given. 
+
+
+### Convolutional Neural Nets
+
+Here's a schemata of a traditional neural net architecture. The architecture used in this application is described in the appendex of the paper & all code is available on the Github repo. The model architecture used here takes colour RGB images resized (3x56x56) input, followed by 3 convolutional layers (each followed with a max-pooling layer) followed by a dense layer dropout layer to avoid overfitting & a fully-connected dense layer. Totally 159'041 parameters, the statistian in me always gets uncomfortable when fitting neural networks :P 
+
+```{r}
+library(magick)
+renderImage({
+  
+  
+  
+  img <- magick::image_read('~/Desktop/MSc Advanced Analytics/MMID/Assignment/images/CNN Parameterization.png')
+  img <- magick::image_read('~/Desktop/MSc Advanced Analytics/MMID/Assignment/images/model images/CNN.jpg')
+  tmpfile <- img %>% # image_resize(400) %>% 
+    image_write(tempfile(fileext='png'), format = 'png')
+  list(src = tmpfile, contentType = "image/png")
+})
+
+```
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+
+
+### Malaria Detection
+
+```{r}
+
+
+prediction_dataset <- read.csv("~/Desktop/MSc Advanced Analytics/MMID/Assignment/implementation/prediction_dataset")
+
+
+
+setwd('~/Desktop/MSc Advanced Analytics/MMID/Assignment/implementation')
+random_index <- sample(1:dim(prediction_dataset)[1], 1)
+img <- magick::image_read(prediction_dataset[random_index, 'file_paths'])
+
+
+
+
+random_choice <- eventReactive(input$predict, {
+  sample(1:dim(prediction_dataset)[1], 1)
+  })
+
+
+
+
+    
+
+
+
+renderImage({
+  setwd('~/Desktop/MSc Advanced Analytics/MMID/Assignment/implementation')
+  random_index <- random_choice()
+  img <- magick::image_read(prediction_dataset[random_index, 'file_paths'])
+  img
+  
+  tmpfile <- img %>%
+    #  image_resize(400) %>%
+      image_write(tempfile(fileext='png'), format = 'png')
+
+  
+  # Return a list
+  list(src = tmpfile, contentType = "image/png", width="300", height="300" )
+  
+
+  
+  })
+
+
+
+
+```
+
+
+
+### Prediction Accuracy
+```{r}
+classification <- function(yhat, y) {
+  if (yhat > 0.5) {
+    pred <- 'Uninfected'
+    confidence <- yhat
+    }
+  else {
+    pred <- 'Parasitized'
+    confidence <- 1-yhat
+  }
+  if (y == (yhat > 0.5)) correct <- 'Accurately Classified'
+  else correct <- 'Misclassified'
+  
+  list(pred, confidence, correct)
+}
+
+
+renderPrint({
+  
+  random_index <- random_choice()
+  classification(prediction_dataset[random_index, 'yhat'], prediction_dataset[random_index, 'y'])
+  
+})
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
